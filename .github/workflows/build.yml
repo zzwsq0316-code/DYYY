@@ -1,3 +1,4 @@
+# RootHide-only build verification
 name: Build RootHide DEB
 
 on:
