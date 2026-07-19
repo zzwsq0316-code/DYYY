@@ -11410,7 +11410,7 @@ static Class tabBarButtonClass = nil;
         }
     }
 
-    if (isPlayVC && enableFS) {
+    if (isPlayVC && enableFS && [DYYYUtils isPlayerViewControllerActiveForFullscreenLayout:vc]) {
         if (frame.origin.x != 0 && frame.origin.y != 0) {
             %orig(frame);
             return;
@@ -11705,7 +11705,7 @@ static Class tabBarButtonClass = nil;
 
 - (void)viewDidLayoutSubviews {
     %orig;
-    if (DYYYGetBool(@"DYYYEnableFullScreen")) {
+    if (DYYYGetBool(@"DYYYEnableFullScreen") && [DYYYUtils isPlayerViewControllerActiveForFullscreenLayout:self]) {
         UIView *contentView = self.contentView;
         if (contentView && contentView.superview) {
             CGRect frame = contentView.frame;
@@ -11754,7 +11754,7 @@ static Class tabBarButtonClass = nil;
 
 - (void)viewDidLayoutSubviews {
     %orig;
-    if (DYYYGetBool(@"DYYYEnableFullScreen")) {
+    if (DYYYGetBool(@"DYYYEnableFullScreen") && [DYYYUtils isPlayerViewControllerActiveForFullscreenLayout:self]) {
         UIView *contentView = self.contentView;
         if (contentView && contentView.superview) {
             CGRect frame = contentView.frame;

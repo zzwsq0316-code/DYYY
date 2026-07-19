@@ -52,6 +52,12 @@ NS_ASSUME_NONNULL_BEGIN
 + (UIViewController *)firstAvailableViewControllerFromView:(UIView *)view;
 + (UIViewController *)findViewControllerOfClass:(Class)targetClass inViewController:(UIViewController *)vc;
 
+/**
+ * 判断播放器控制器是否仍位于当前可交互的页面层级。
+ * 用于避免页面跳转后，复用中的播放器继续套用信息流全屏布局。
+ */
++ (BOOL)isPlayerViewControllerActiveForFullscreenLayout:(UIViewController *)viewController;
+
 + (UIResponder *)findAncestorResponderOfClass:(Class)targetClass fromView:(UIView *)view;
 
 /*

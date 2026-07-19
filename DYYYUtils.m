@@ -383,6 +383,8 @@ static BOOL DYYYUtilsWriteStaticImageToGIF(UIImage *image, NSURL *gifURL) {
 + (NSString *)displayLocationForGeoNamesError:(NSError *)error model:(AWEAwemeModel *)model;
 + (id)dyyy_safeValueForKey:(NSString *)key fromObject:(id)object;
 + (BOOL)dyyy_objectContainsMeaningfulAdPayload:(id)object;
++ (BOOL)dyyy_controller:(UIViewController *)ancestor containsController:(UIViewController *)descendant;
++ (UIViewController *)dyyy_nearestCommonAncestorForController:(UIViewController *)first otherController:(UIViewController *)second;
 @end
 
 @implementation DYYYUtils
@@ -876,6 +878,104 @@ static void DYYYApplyDisplayLocationToLabel(UILabel *label, NSString *displayLoc
         }
     }
     return nil;
+}
+
++ (BOOL)dyyy_controller:(UIViewController *)ancestor containsController:(UIViewController *)descendant {
+    UIViewController *currentController = descendant;
+    while (currentController) {
+        if (currentController == ancestor) {
+            return YES;
+        }
+        currentController = currentController.parentViewController;
+    }
+    return NO;
+}
+
++ (UIViewController *)dyyy_nearestCommonAncestorForController:(UIViewController *)first otherController:(UIViewController *)second {
+    if (!first || !second) {
+        return nil;
+    }
+
+    NSHashTable<UIViewController *> *firstAncestors = [NSHashTable weakObjectsHashTable];
+    UIViewController *currentController = first;
+    while (currentController) {
+        [firstAncestors addObject:currentController];
+        currentController = currentController.parentViewController;
+    }
+
+    currentController = second;
+    while (currentController) {
+        if ([firstAncestors containsObject:currentController]) {
+            return currentController;
+        }
+        currentController = currentController.parentViewController;
+    }
+    return nil;
+}
+
++ (BOOL)isPlayerViewControllerActiveForFullscreenLayout:(UIViewController *)viewController {
+    if (!viewController || !viewController.isViewLoaded) {
+        return NO;
+    }
+
+    UIView *view = viewController.view;
+    UIWindow *window = view.window;
+    UIWindow *activeWindow = [self getActiveWindow];
+    if (!window || window != activeWindow || view.hidden || view.alpha <= 0.01 || CGRectIsEmpty(view.bounds)) {
+        return NO;
+    }
+
+    UIViewController *currentController = viewController;
+    while (currentController.parentViewController) {
+        UIViewController *parentController = currentController.parentViewController;
+        if ([parentController isKindOfClass:[UINavigationController class]]) {
+            UIViewController *visibleViewController = ((UINavigationController *)parentController).visibleViewController;
+            if (visibleViewController && ![self dyyy_controller:visibleViewController containsController:viewController]) {
+                return NO;
+            }
+        } else if ([parentController isKindOfClass:[UITabBarController class]]) {
+            UIViewController *selectedViewController = ((UITabBarController *)parentController).selectedViewController;
+            if (selectedViewController && ![self dyyy_controller:selectedViewController containsController:viewController]) {
+                return NO;
+            }
+        }
+
+        UIViewController *presentedViewController = parentController.presentedViewController;
+        if (presentedViewController && ![self dyyy_controller:presentedViewController containsController:viewController]) {
+            return NO;
+        }
+        currentController = parentController;
+    }
+
+    UIViewController *activeRootViewController = window.rootViewController;
+    while (activeRootViewController.presentedViewController) {
+        activeRootViewController = activeRootViewController.presentedViewController;
+    }
+    if (![self dyyy_controller:activeRootViewController containsController:viewController]) {
+        return NO;
+    }
+
+    CGRect frameInWindow = [view convertRect:view.bounds toView:window];
+    CGRect visibleFrame = CGRectIntersection(frameInWindow, window.bounds);
+    if (CGRectIsNull(visibleFrame) || CGRectIsEmpty(visibleFrame)) {
+        return NO;
+    }
+
+    CGPoint probePoint = CGPointMake(CGRectGetMidX(visibleFrame), CGRectGetMidY(visibleFrame));
+    UIView *hitView = [window hitTest:probePoint withEvent:nil];
+    if (!hitView || hitView == view || [hitView isDescendantOfView:view]) {
+        return hitView != nil;
+    }
+
+    UIViewController *hitViewController = [self firstAvailableViewControllerFromView:hitView];
+    UIViewController *commonAncestor = [self dyyy_nearestCommonAncestorForController:viewController otherController:hitViewController];
+    if (!commonAncestor || commonAncestor == activeRootViewController ||
+        [commonAncestor isKindOfClass:[UINavigationController class]] ||
+        [commonAncestor isKindOfClass:[UITabBarController class]]) {
+        return NO;
+    }
+
+    return YES;
 }
 
 + (UIViewController *)findViewControllerOfClass:(Class)targetClass inViewController:(UIViewController *)vc {
