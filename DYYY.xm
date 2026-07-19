@@ -112,6 +112,40 @@ static NSString *DYYYCustomAssetsDirectory(void) {
     return customDirectory;
 }
 
+static BOOL DYYYStringContainsAnyMarker(NSString *value, NSArray<NSString *> *markers) {
+    NSString *lowered = [value lowercaseString];
+    if (lowered.length == 0) {
+        return NO;
+    }
+    for (NSString *marker in markers) {
+        if ([lowered containsString:marker]) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
+static BOOL DYYYIsPrivateMessagePlaybackContext(AWEPlayInteractionViewController *controller) {
+    if (!controller) {
+        return NO;
+    }
+
+    NSArray<NSString *> *referMarkers = @[ @"chat", @"message", @"private", @"forward", @"share", @"im_", @"_im" ];
+    if (DYYYStringContainsAnyMarker(controller.referString, referMarkers)) {
+        return YES;
+    }
+
+    NSArray<NSString *> *controllerMarkers = @[ @"chat", @"message", @"richcontent", @"friendsshare", @"aweim", @"immedia" ];
+    UIViewController *current = controller;
+    for (NSUInteger depth = 0; current && depth < 12; depth++) {
+        if (DYYYStringContainsAnyMarker(NSStringFromClass(current.class), controllerMarkers)) {
+            return YES;
+        }
+        current = current.parentViewController ?: current.presentingViewController;
+    }
+    return NO;
+}
+
 static NSString *DYYYCustomIconFileNameForButtonName(NSString *nameString) {
     if (nameString.length == 0) {
         return nil;
@@ -8429,6 +8463,7 @@ static NSHashTable *processedParentViews = nil;
     // --- 配置读取 ---
     NSInteger daysThreshold = DYYYGetInteger(@"DYYYFilterTimeLimit");
     BOOL skipLive = DYYYGetBool(@"DYYYSkipLive"); // 读取直播过滤开关
+    BOOL skipAllLive = DYYYGetBool(@"DYYYSkipAllLive");
     NSInteger minLikesThreshold = DYYYGetInteger(@"DYYYFilterLowLikes"); // 读取低赞过滤阈值 (例如: 1000)
     BOOL skipPhotoText = DYYYGetBool(@"DYYYSkipPhotoText"); // 图文过滤
     BOOL skipPhoto = DYYYGetBool(@"DYYYSkipPhoto"); // 图集过滤
@@ -8449,6 +8484,16 @@ static NSHashTable *processedParentViews = nil;
         }
 
         AWEAwemeModel *m = (AWEAwemeModel *)obj;
+        BOOL shouldPreserveLive = !skipLive && !skipAllLive && [DYYYUtils isLiveAwemeModel:m];
+
+        // 两个直播过滤开关均关闭时，直播模型不参与普通视频过滤，避免被误判为关播后自动跳过。
+        if (shouldPreserveLive) {
+            if (shouldDisableHDR) {
+                DYYYStripHDRHintsFromAwemeModel(m);
+            }
+            [baseFiltered addObject:obj];
+            continue;
+        }
 
         // 1. 广告过滤：合集、搜索内流、分页追加等旁路也会进入此共享转换。
         if (noAds && [DYYYUtils isAdvertisementAwemeModel:m]) {
@@ -8527,6 +8572,11 @@ static NSHashTable *processedParentViews = nil;
         }
 
         AWEAwemeModel *m = (AWEAwemeModel *)obj;
+        BOOL shouldPreserveLive = !skipLive && !skipAllLive && [DYYYUtils isLiveAwemeModel:m];
+        if (shouldPreserveLive) {
+            [lowLikesFiltered addObject:obj];
+            continue;
+        }
         NSNumber *diggCountValue = [self dyyy_resolvedDiggCountForAweme:m];
 
         if (!diggCountValue) {
@@ -8551,29 +8601,36 @@ static NSHashTable *processedParentViews = nil;
 - (id)initWithDictionary:(id)arg1 error:(id *)arg2 {
     id orig = %orig;
     if (orig) {
+        BOOL shouldPreserveLive = !DYYYGetBool(@"DYYYSkipLive") &&
+                                  !DYYYGetBool(@"DYYYSkipAllLive") &&
+                                  [DYYYUtils isLiveAwemeModel:self];
         BOOL shouldDisableHDR = DYYYShouldDisableAllHDR();
         BOOL shouldFilterOnlyHDRSource = NO;
-        if (shouldDisableHDR && ![self dyyy_shouldExcludeFromGlobalHDRFilter]) {
-            shouldFilterOnlyHDRSource = DYYYAwemeModelHasOnlyHDRBitrateModels(self);
-            if (!shouldFilterOnlyHDRSource) {
-                shouldFilterOnlyHDRSource = DYYYRawObjectHasOnlyHDRBitrateModels(arg1);
-                if (shouldFilterOnlyHDRSource) {
-                    objc_setAssociatedObject(self, &kDYYYHDROnlyAwemeModelKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        BOOL shouldFilter = NO;
+        if (!shouldPreserveLive) {
+            if (shouldDisableHDR && ![self dyyy_shouldExcludeFromGlobalHDRFilter]) {
+                shouldFilterOnlyHDRSource = DYYYAwemeModelHasOnlyHDRBitrateModels(self);
+                if (!shouldFilterOnlyHDRSource) {
+                    shouldFilterOnlyHDRSource = DYYYRawObjectHasOnlyHDRBitrateModels(arg1);
+                    if (shouldFilterOnlyHDRSource) {
+                        objc_setAssociatedObject(self, &kDYYYHDROnlyAwemeModelKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                    }
                 }
             }
-        }
-        BOOL shouldFilter = DYYYGetBool(@"DYYYNoAds") &&
-                            ([DYYYUtils isAdvertisementAwemeModel:self] || [DYYYUtils isAdvertisementRawData:arg1]);
-        if (!shouldFilter) {
-            shouldFilter = [self contentFilter];
-        }
-        if (!shouldFilter && shouldFilterOnlyHDRSource) {
-            shouldFilter = YES;
-        }
-        if (!shouldFilter && DYYYShouldFilterGlobalHDR() &&
-            ![self dyyy_shouldExcludeFromGlobalHDRFilter] &&
-            [self dyyy_containsHDRMetadataInObject:arg1 depth:0]) {
-            shouldFilter = YES;
+
+            shouldFilter = DYYYGetBool(@"DYYYNoAds") &&
+                           ([DYYYUtils isAdvertisementAwemeModel:self] || [DYYYUtils isAdvertisementRawData:arg1]);
+            if (!shouldFilter) {
+                shouldFilter = [self contentFilter];
+            }
+            if (!shouldFilter && shouldFilterOnlyHDRSource) {
+                shouldFilter = YES;
+            }
+            if (!shouldFilter && DYYYShouldFilterGlobalHDR() &&
+                ![self dyyy_shouldExcludeFromGlobalHDRFilter] &&
+                [self dyyy_containsHDRMetadataInObject:arg1 depth:0]) {
+                shouldFilter = YES;
+            }
         }
         if (shouldFilter) {
             return nil;
@@ -8676,6 +8733,7 @@ static NSHashTable *processedParentViews = nil;
 %new
 - (BOOL)contentFilter {
     BOOL noAds = DYYYGetBool(@"DYYYNoAds");
+    BOOL skipLive = DYYYGetBool(@"DYYYSkipLive");
     BOOL skipAllLive = DYYYGetBool(@"DYYYSkipAllLive");
     BOOL skipHotSpot = DYYYGetBool(@"DYYYSkipHotSpot");
     BOOL skipPhoto = DYYYGetBool(@"DYYYSkipPhoto");
@@ -8683,6 +8741,11 @@ static NSHashTable *processedParentViews = nil;
     BOOL skipMusic = DYYYGetBool(@"DYYYSkipMusic");
     BOOL skipAIInteraction = DYYYGetBool(@"DYYYSkipAIInteraction");
     BOOL filterHDR = DYYYShouldFilterGlobalHDR();
+
+    BOOL shouldPreserveLive = !skipLive && !skipAllLive && [DYYYUtils isLiveAwemeModel:self];
+    if (shouldPreserveLive) {
+        return NO;
+    }
 
     BOOL shouldFilterAds = noAds && [DYYYUtils isAdvertisementAwemeModel:self];
     BOOL shouldFilterHotSpot = skipHotSpot && self.hotSpotLynxCardModel;
@@ -11410,7 +11473,7 @@ static Class tabBarButtonClass = nil;
         }
     }
 
-    if (isPlayVC && enableFS) {
+    if (isPlayVC && enableFS && [DYYYUtils isPlayerViewControllerActiveForFullscreenLayout:vc candidateView:self]) {
         if (frame.origin.x != 0 && frame.origin.y != 0) {
             %orig(frame);
             return;
@@ -11554,6 +11617,10 @@ static Class tabBarButtonClass = nil;
                          [currentReferString isEqualToString:@"close_friends_moment"] || [currentReferString isEqualToString:@"offline_mode"] || [currentReferString isEqualToString:@"challenge"] ||
                          [currentReferString isEqualToString:@"general_search_scan"] || currentReferString == nil;
 
+    if (DYYYIsPrivateMessagePlaybackContext(self)) {
+        useFullHeight = YES;
+    }
+
     if (!useFullHeight && [currentReferString isEqualToString:@"co_play_watch"]) {
         Class richContentVCClass = NSClassFromString(@"AWEFriendsImpl.RichContentNewListViewController");
         if (richContentVCClass && [directParentVC isKindOfClass:richContentVCClass]) {
@@ -11573,8 +11640,12 @@ static Class tabBarButtonClass = nil;
             }
         }
 
-        // 39.2.0 及更早版本的私信播放页以完整高度布局信息区，否则底部约束会整体上移。 （靠版本号判断不靠谱，这个是 abtest 的）
-        if (currentVersion.length > 0 && [DYYYUtils compareVersion:currentVersion toVersion:@"39.2.0"] != NSOrderedDescending) {
+        BOOL isLegacyChatLayout = currentVersion.length > 0 &&
+                                  [DYYYUtils compareVersion:currentVersion toVersion:@"39.2.0"] != NSOrderedDescending;
+        BOOL usesNewChatLayout = [DYYYUtils isABTestEnabledForKey:@"im_media_detail_page_opt"];
+
+        // 旧版与新版朋友分享视频页面都使用完整高度，避免信息区按首页底栏高度重复上移。
+        if (isLegacyChatLayout || usesNewChatLayout) {
             useFullHeight = YES;
         }
     }
@@ -11705,8 +11776,8 @@ static Class tabBarButtonClass = nil;
 
 - (void)viewDidLayoutSubviews {
     %orig;
-    if (DYYYGetBool(@"DYYYEnableFullScreen")) {
-        UIView *contentView = self.contentView;
+    UIView *contentView = self.contentView;
+    if (DYYYGetBool(@"DYYYEnableFullScreen") && [DYYYUtils isPlayerViewControllerActiveForFullscreenLayout:self candidateView:contentView]) {
         if (contentView && contentView.superview) {
             CGRect frame = contentView.frame;
             CGFloat parentHeight = contentView.superview.frame.size.height;
@@ -11754,8 +11825,8 @@ static Class tabBarButtonClass = nil;
 
 - (void)viewDidLayoutSubviews {
     %orig;
-    if (DYYYGetBool(@"DYYYEnableFullScreen")) {
-        UIView *contentView = self.contentView;
+    UIView *contentView = self.contentView;
+    if (DYYYGetBool(@"DYYYEnableFullScreen") && [DYYYUtils isPlayerViewControllerActiveForFullscreenLayout:self candidateView:contentView]) {
         if (contentView && contentView.superview) {
             CGRect frame = contentView.frame;
             CGFloat parentHeight = contentView.superview.frame.size.height;

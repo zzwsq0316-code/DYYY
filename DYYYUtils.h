@@ -16,6 +16,12 @@ NS_ASSUME_NONNULL_BEGIN
 /** 使用抖音模型自身的广告判定及明确广告字段识别广告作品。 */
 + (BOOL)isAdvertisementAwemeModel:(id)model;
 
+/** 综合模型标记识别直播作品，兼容不同抖音版本的字段变化。 */
++ (BOOL)isLiveAwemeModel:(id)model;
+
+/** 安全读取抖音当前下发的 ABTest 布尔配置。 */
++ (BOOL)isABTestEnabledForKey:(NSString *)key;
+
 /** 识别作品模型或搜索结果包装模型中的广告。 */
 + (BOOL)isAdvertisementContainerModel:(id)model;
 
@@ -51,6 +57,12 @@ NS_ASSUME_NONNULL_BEGIN
 /* 在视图控制器层级中查找指定类的控制器 */
 + (UIViewController *)firstAvailableViewControllerFromView:(UIView *)view;
 + (UIViewController *)findViewControllerOfClass:(Class)targetClass inViewController:(UIViewController *)vc;
+
+/**
+ * 判断播放器控制器及候选视图是否仍位于当前可交互的全宽页面层级。
+ * 用于避免页面跳转或分栏展示后，复用中的播放器继续套用信息流全屏布局。
+ */
++ (BOOL)isPlayerViewControllerActiveForFullscreenLayout:(UIViewController *)viewController candidateView:(UIView *)candidateView;
 
 + (UIResponder *)findAncestorResponderOfClass:(Class)targetClass fromView:(UIView *)view;
 
