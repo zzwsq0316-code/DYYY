@@ -42,6 +42,17 @@ class ChatLayoutABTestTests(unittest.TestCase):
         self.assertIn("usesNewChatLayout", body)
         self.assertRegex(body, r"isLegacyChatLayout\s*\|\|\s*usesNewChatLayout")
 
+    def test_private_message_layout_uses_broad_runtime_context_detection(self) -> None:
+        self.assertIn("DYYYIsPrivateMessagePlaybackContext(self)", self.tweak)
+        lowered = self.tweak.lower()
+        for marker in (
+            '@"chat"',
+            '@"message"',
+            '@"private"',
+            '@"richcontent"',
+        ):
+            self.assertIn(marker, lowered)
+
 
 if __name__ == "__main__":
     unittest.main()

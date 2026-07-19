@@ -112,6 +112,120 @@ static NSString *DYYYCustomAssetsDirectory(void) {
     return customDirectory;
 }
 
+static BOOL DYYYStringContainsAnyMarker(NSString *value, NSArray<NSString *> *markers) {
+    NSString *lowered = [value lowercaseString];
+    if (lowered.length == 0) {
+        return NO;
+    }
+    for (NSString *marker in markers) {
+        if ([lowered containsString:marker]) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
+static BOOL DYYYIsPrivateMessagePlaybackContext(AWEPlayInteractionViewController *controller) {
+    if (!controller) {
+        return NO;
+    }
+
+    NSArray<NSString *> *referMarkers = @[ @"chat", @"message", @"private", @"forward", @"share", @"im_", @"_im" ];
+    if (DYYYStringContainsAnyMarker(controller.referString, referMarkers)) {
+        return YES;
+    }
+
+    NSArray<NSString *> *controllerMarkers = @[ @"chat", @"message", @"richcontent", @"friendsshare", @"aweim", @"immedia" ];
+    UIViewController *current = controller;
+    for (NSUInteger depth = 0; current && depth < 12; depth++) {
+        if (DYYYStringContainsAnyMarker(NSStringFromClass(current.class), controllerMarkers)) {
+            return YES;
+        }
+        current = current.parentViewController ?: current.presentingViewController;
+    }
+    return NO;
+}
+
+static NSString *DYYYControllerChainDescription(UIViewController *controller) {
+    NSMutableArray<NSString *> *names = [NSMutableArray array];
+    UIViewController *current = controller;
+    for (NSUInteger depth = 0; current && depth < 16; depth++) {
+        [names addObject:NSStringFromClass(current.class) ?: @"<unknown>"];
+        current = current.parentViewController ?: current.presentingViewController;
+    }
+    return [names componentsJoinedByString:@" -> "];
+}
+
+static void DYYYAppendControllerHierarchy(UIViewController *controller, NSMutableArray<NSString *> *lines, NSUInteger depth) {
+    if (!controller || depth > 10) {
+        return;
+    }
+    NSString *indent = [@"  " stringByPaddingToLength:depth * 2 withString:@"  " startingAtIndex:0];
+    CGRect frame = controller.isViewLoaded ? controller.view.frame : CGRectZero;
+    [lines addObject:[NSString stringWithFormat:@"%@%@ frame={%.1f,%.1f,%.1f,%.1f} window=%d",
+                      indent, NSStringFromClass(controller.class), frame.origin.x, frame.origin.y,
+                      frame.size.width, frame.size.height, controller.isViewLoaded && controller.view.window != nil]];
+    for (UIViewController *child in controller.childViewControllers) {
+        DYYYAppendControllerHierarchy(child, lines, depth + 1);
+    }
+    if (controller.presentedViewController) {
+        [lines addObject:[NSString stringWithFormat:@"%@presented:", indent]];
+        DYYYAppendControllerHierarchy(controller.presentedViewController, lines, depth + 1);
+    }
+}
+
+static void DYYYCapturePartialPlayerContextIfNeeded(UIViewController *playerController, UIView *contentView) {
+    UIWindow *window = contentView.window;
+    if (!playerController || !contentView || !window || window != [DYYYUtils getActiveWindow] ||
+        contentView.hidden || contentView.alpha <= 0.01 || CGRectIsEmpty(contentView.bounds)) {
+        return;
+    }
+
+    CGRect frameInWindow = [contentView convertRect:contentView.bounds toView:window];
+    CGRect visibleFrame = CGRectIntersection(frameInWindow, window.bounds);
+    CGFloat windowWidth = CGRectGetWidth(window.bounds);
+    BOOL isLargePlayer = CGRectGetWidth(frameInWindow) >= windowWidth * 0.70 && CGRectGetHeight(frameInWindow) >= CGRectGetHeight(window.bounds) * 0.25;
+    BOOL isHorizontallyClipped = !CGRectIsNull(visibleFrame) && !CGRectIsEmpty(visibleFrame) &&
+                                 CGRectGetWidth(visibleFrame) < windowWidth - 1.0 &&
+                                 CGRectGetWidth(visibleFrame) >= windowWidth * 0.20 &&
+                                 (CGRectGetMinX(frameInWindow) > 1.0 || CGRectGetMaxX(frameInWindow) < windowWidth - 1.0 || CGRectGetMaxX(frameInWindow) > windowWidth + 1.0);
+    if (!isLargePlayer || !isHorizontallyClipped) {
+        return;
+    }
+
+    static CFTimeInterval lastCaptureTime = 0;
+    CFTimeInterval now = CACurrentMediaTime();
+    if (now - lastCaptureTime < 2.0) {
+        return;
+    }
+    lastCaptureTime = now;
+
+    CGPoint probePoint = CGPointMake(CGRectGetMidX(visibleFrame), CGRectGetMidY(visibleFrame));
+    UIView *hitView = [window hitTest:probePoint withEvent:nil];
+    UIViewController *hitController = [DYYYUtils firstAvailableViewControllerFromView:hitView];
+    UIViewController *activeController = window.rootViewController;
+    while (activeController.presentedViewController) {
+        activeController = activeController.presentedViewController;
+    }
+
+    NSMutableArray<NSString *> *hierarchy = [NSMutableArray array];
+    DYYYAppendControllerHierarchy(window.rootViewController, hierarchy, 0);
+    NSString *diagnostic = [NSString stringWithFormat:
+        @"DYYY 39.6 groupon player diagnostic\nversion=%@\nplayer=%@\nframe={%.1f,%.1f,%.1f,%.1f}\nvisible={%.1f,%.1f,%.1f,%.1f}\nplayerChain=%@\nhitView=%@\nhitChain=%@\nactiveChain=%@\ncontrollerTree:\n%@",
+        DYYY_VERSION, NSStringFromClass(playerController.class),
+        frameInWindow.origin.x, frameInWindow.origin.y, frameInWindow.size.width, frameInWindow.size.height,
+        visibleFrame.origin.x, visibleFrame.origin.y, visibleFrame.size.width, visibleFrame.size.height,
+        DYYYControllerChainDescription(playerController), NSStringFromClass(hitView.class),
+        DYYYControllerChainDescription(hitController), DYYYControllerChainDescription(activeController),
+        [hierarchy componentsJoinedByString:@"\n"]];
+
+    [UIPasteboard generalPasteboard].string = diagnostic;
+    NSString *path = [DYYYCustomAssetsDirectory() stringByAppendingPathComponent:@"groupon_player_context.txt"];
+    [diagnostic writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    DYYYNSLog(@"%@", diagnostic);
+    [DYYYToast showSuccessToastWithMessage:@"已复制团购播放器诊断信息，请粘贴给开发者"];
+}
+
 static NSString *DYYYCustomIconFileNameForButtonName(NSString *nameString) {
     if (nameString.length == 0) {
         return nil;
@@ -11583,6 +11697,10 @@ static Class tabBarButtonClass = nil;
                          [currentReferString isEqualToString:@"close_friends_moment"] || [currentReferString isEqualToString:@"offline_mode"] || [currentReferString isEqualToString:@"challenge"] ||
                          [currentReferString isEqualToString:@"general_search_scan"] || currentReferString == nil;
 
+    if (DYYYIsPrivateMessagePlaybackContext(self)) {
+        useFullHeight = YES;
+    }
+
     if (!useFullHeight && [currentReferString isEqualToString:@"co_play_watch"]) {
         Class richContentVCClass = NSClassFromString(@"AWEFriendsImpl.RichContentNewListViewController");
         if (richContentVCClass && [directParentVC isKindOfClass:richContentVCClass]) {
@@ -11739,6 +11857,7 @@ static Class tabBarButtonClass = nil;
 - (void)viewDidLayoutSubviews {
     %orig;
     UIView *contentView = self.contentView;
+    DYYYCapturePartialPlayerContextIfNeeded(self, contentView);
     if (DYYYGetBool(@"DYYYEnableFullScreen") && [DYYYUtils isPlayerViewControllerActiveForFullscreenLayout:self candidateView:contentView]) {
         if (contentView && contentView.superview) {
             CGRect frame = contentView.frame;
@@ -11788,6 +11907,7 @@ static Class tabBarButtonClass = nil;
 - (void)viewDidLayoutSubviews {
     %orig;
     UIView *contentView = self.contentView;
+    DYYYCapturePartialPlayerContextIfNeeded(self, contentView);
     if (DYYYGetBool(@"DYYYEnableFullScreen") && [DYYYUtils isPlayerViewControllerActiveForFullscreenLayout:self candidateView:contentView]) {
         if (contentView && contentView.superview) {
             CGRect frame = contentView.frame;
