@@ -146,68 +146,6 @@ static BOOL DYYYIsPrivateMessagePlaybackContext(AWEPlayInteractionViewController
     return NO;
 }
 
-static NSString *DYYYControllerChainDescription(UIViewController *controller) {
-    NSMutableArray<NSString *> *names = [NSMutableArray array];
-    UIViewController *current = controller;
-    for (NSUInteger depth = 0; current && depth < 16; depth++) {
-        [names addObject:NSStringFromClass(current.class) ?: @"<unknown>"];
-        current = current.parentViewController ?: current.presentingViewController;
-    }
-    return [names componentsJoinedByString:@" -> "];
-}
-
-static void DYYYCapturePartialPlayerContextIfNeeded(UIViewController *playerController, UIView *contentView) {
-    UIWindow *window = contentView.window;
-    if (!playerController || !contentView || !window || window != [DYYYUtils getActiveWindow] ||
-        contentView.hidden || contentView.alpha <= 0.01 || CGRectIsEmpty(contentView.bounds)) {
-        return;
-    }
-
-    CGRect frameInWindow = [contentView convertRect:contentView.bounds toView:window];
-    CGRect visibleFrame = CGRectIntersection(frameInWindow, window.bounds);
-    CGFloat windowWidth = CGRectGetWidth(window.bounds);
-    BOOL isLargePlayer = CGRectGetWidth(frameInWindow) >= windowWidth * 0.70 && CGRectGetHeight(frameInWindow) >= CGRectGetHeight(window.bounds) * 0.25;
-    BOOL isHorizontallyClipped = !CGRectIsNull(visibleFrame) && !CGRectIsEmpty(visibleFrame) &&
-                                 CGRectGetWidth(visibleFrame) < windowWidth - 1.0 &&
-                                 CGRectGetWidth(visibleFrame) >= windowWidth * 0.20 &&
-                                 (CGRectGetMinX(frameInWindow) > 1.0 || CGRectGetMaxX(frameInWindow) < windowWidth - 1.0 || CGRectGetMaxX(frameInWindow) > windowWidth + 1.0);
-    if (!isLargePlayer || !isHorizontallyClipped) {
-        return;
-    }
-
-    static CFTimeInterval lastCaptureTime = 0;
-    CFTimeInterval now = CACurrentMediaTime();
-    if (now - lastCaptureTime < 2.0) {
-        return;
-    }
-    lastCaptureTime = now;
-
-    CGPoint probePoint = CGPointMake(CGRectGetMidX(visibleFrame), CGRectGetMidY(visibleFrame));
-    UIView *hitView = [window hitTest:probePoint withEvent:nil];
-    UIViewController *hitController = [DYYYUtils firstAvailableViewControllerFromView:hitView];
-    UIViewController *activeController = window.rootViewController;
-    while (activeController.presentedViewController) {
-        activeController = activeController.presentedViewController;
-    }
-
-    NSString *diagnostic = [NSString stringWithFormat:
-        @"DYYY 39.6 groupon player diagnostic\nversion=%@\nplayer=%@\nframe={%.1f,%.1f,%.1f,%.1f}\nvisible={%.1f,%.1f,%.1f,%.1f}\nplayerChain=%@\nhitView=%@\nhitChain=%@\nactiveChain=%@",
-        DYYY_VERSION, NSStringFromClass(playerController.class),
-        frameInWindow.origin.x, frameInWindow.origin.y, frameInWindow.size.width, frameInWindow.size.height,
-        visibleFrame.origin.x, visibleFrame.origin.y, visibleFrame.size.width, visibleFrame.size.height,
-        DYYYControllerChainDescription(playerController), NSStringFromClass(hitView.class),
-        DYYYControllerChainDescription(hitController), DYYYControllerChainDescription(activeController)];
-
-    [UIPasteboard generalPasteboard].string = diagnostic;
-    [DYYYToast showSuccessToastWithMessage:@"已复制团购播放器诊断信息，请粘贴给开发者"];
-    NSString *diagnosticCopy = [diagnostic copy];
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-      NSString *path = [DYYYCustomAssetsDirectory() stringByAppendingPathComponent:@"groupon_player_context.txt"];
-      [diagnosticCopy writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
-      DYYYNSLog(@"%@", diagnosticCopy);
-    });
-}
-
 static NSString *DYYYCustomIconFileNameForButtonName(NSString *nameString) {
     if (nameString.length == 0) {
         return nil;
@@ -11839,7 +11777,6 @@ static Class tabBarButtonClass = nil;
 - (void)viewDidLayoutSubviews {
     %orig;
     UIView *contentView = self.contentView;
-    DYYYCapturePartialPlayerContextIfNeeded(self, contentView);
     if (DYYYGetBool(@"DYYYEnableFullScreen") && [DYYYUtils isPlayerViewControllerActiveForFullscreenLayout:self candidateView:contentView]) {
         if (contentView && contentView.superview) {
             CGRect frame = contentView.frame;
@@ -11889,7 +11826,6 @@ static Class tabBarButtonClass = nil;
 - (void)viewDidLayoutSubviews {
     %orig;
     UIView *contentView = self.contentView;
-    DYYYCapturePartialPlayerContextIfNeeded(self, contentView);
     if (DYYYGetBool(@"DYYYEnableFullScreen") && [DYYYUtils isPlayerViewControllerActiveForFullscreenLayout:self candidateView:contentView]) {
         if (contentView && contentView.superview) {
             CGRect frame = contentView.frame;
