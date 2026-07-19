@@ -448,6 +448,66 @@ static const void *kCurrentIPRequestCityCodeKey = &kCurrentIPRequestCityCodeKey;
     return NO;
 }
 
++ (BOOL)isLiveAwemeModel:(id)model {
+    Class awemeModelClass = NSClassFromString(@"AWEAwemeModel");
+    if (!model || !awemeModelClass || ![model isKindOfClass:awemeModelClass]) {
+        return NO;
+    }
+
+    @try {
+        SEL isLiveSelector = @selector(isLive);
+        if ([model respondsToSelector:isLiveSelector]) {
+            BOOL (*sendBool)(id, SEL) = (BOOL (*)(id, SEL))objc_msgSend;
+            if (sendBool(model, isLiveSelector)) {
+                return YES;
+            }
+        }
+
+        id cellRoom = [self dyyy_safeValueForKey:@"cellRoom" fromObject:model];
+        if (cellRoom && cellRoom != [NSNull null]) {
+            return YES;
+        }
+
+        id videoFeedTag = [self dyyy_safeValueForKey:@"videoFeedTag" fromObject:model];
+        return [videoFeedTag isKindOfClass:[NSString class]] && [(NSString *)videoFeedTag isEqualToString:@"直播中"];
+    } @catch (__unused NSException *exception) {
+        return NO;
+    }
+}
+
++ (BOOL)isABTestEnabledForKey:(NSString *)key {
+    if (key.length == 0) {
+        return NO;
+    }
+
+    Class managerClass = NSClassFromString(@"AWEABTestManager");
+    if (!managerClass || ![managerClass respondsToSelector:@selector(sharedManager)]) {
+        return NO;
+    }
+
+    @try {
+        AWEABTestManager *manager = [managerClass sharedManager];
+        if (!manager) {
+            return NO;
+        }
+
+        id config = nil;
+        NSDictionary *consistentData = manager.consistentABTestDic;
+        if ([consistentData isKindOfClass:[NSDictionary class]]) {
+            config = consistentData[key];
+        }
+        if (!config && [manager respondsToSelector:@selector(getValueOfConsistentABTestWithKey:)]) {
+            config = [manager getValueOfConsistentABTestWithKey:key];
+        }
+
+        NSDictionary *configDictionary = [config isKindOfClass:[NSDictionary class]] ? (NSDictionary *)config : nil;
+        id enabled = configDictionary ? configDictionary[@"enable"] : config;
+        return [enabled respondsToSelector:@selector(boolValue)] && [enabled boolValue];
+    } @catch (__unused NSException *exception) {
+        return NO;
+    }
+}
+
 + (BOOL)isAdvertisementContainerModel:(id)model {
     if ([self isAdvertisementAwemeModel:model]) {
         return YES;
@@ -913,15 +973,25 @@ static void DYYYApplyDisplayLocationToLabel(UILabel *label, NSString *displayLoc
     return nil;
 }
 
-+ (BOOL)isPlayerViewControllerActiveForFullscreenLayout:(UIViewController *)viewController {
-    if (!viewController || !viewController.isViewLoaded) {
++ (BOOL)isPlayerViewControllerActiveForFullscreenLayout:(UIViewController *)viewController candidateView:(UIView *)candidateView {
+    if (!viewController || !viewController.isViewLoaded || !candidateView) {
         return NO;
     }
 
     UIView *view = viewController.view;
-    UIWindow *window = view.window;
+    UIWindow *window = candidateView.window;
     UIWindow *activeWindow = [self getActiveWindow];
-    if (!window || window != activeWindow || view.hidden || view.alpha <= 0.01 || CGRectIsEmpty(view.bounds)) {
+    if (!window || window != activeWindow || view.window != window ||
+        view.hidden || view.alpha <= 0.01 || CGRectIsEmpty(view.bounds) ||
+        candidateView.hidden || candidateView.alpha <= 0.01 || CGRectIsEmpty(candidateView.bounds)) {
+        return NO;
+    }
+
+    CGRect candidateFrameInWindow = [candidateView convertRect:candidateView.bounds toView:window];
+    CGRect visibleCandidateFrame = CGRectIntersection(candidateFrameInWindow, window.bounds);
+    CGFloat widthTolerance = MAX(1.0, 1.0 / MAX([UIScreen mainScreen].scale, 1.0));
+    if (CGRectIsNull(visibleCandidateFrame) || CGRectIsEmpty(visibleCandidateFrame) ||
+        CGRectGetWidth(visibleCandidateFrame) + widthTolerance < CGRectGetWidth(window.bounds)) {
         return NO;
     }
 
@@ -955,15 +1025,9 @@ static void DYYYApplyDisplayLocationToLabel(UILabel *label, NSString *displayLoc
         return NO;
     }
 
-    CGRect frameInWindow = [view convertRect:view.bounds toView:window];
-    CGRect visibleFrame = CGRectIntersection(frameInWindow, window.bounds);
-    if (CGRectIsNull(visibleFrame) || CGRectIsEmpty(visibleFrame)) {
-        return NO;
-    }
-
-    CGPoint probePoint = CGPointMake(CGRectGetMidX(visibleFrame), CGRectGetMidY(visibleFrame));
+    CGPoint probePoint = CGPointMake(CGRectGetMidX(visibleCandidateFrame), CGRectGetMidY(visibleCandidateFrame));
     UIView *hitView = [window hitTest:probePoint withEvent:nil];
-    if (!hitView || hitView == view || [hitView isDescendantOfView:view]) {
+    if (!hitView || hitView == candidateView || [hitView isDescendantOfView:candidateView]) {
         return hitView != nil;
     }
 

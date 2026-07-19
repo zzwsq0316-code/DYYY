@@ -24,6 +24,7 @@ class FullscreenPlayerScopeTests(unittest.TestCase):
 
     def test_player_layout_hooks_require_an_active_player_context(self) -> None:
         selector = "isPlayerViewControllerActiveForFullscreenLayout:"
+        candidate_label = "candidateView:"
 
         ui_view_hook = hook_body(self.tweak, "UIView")
         feed_player_hook = hook_body(
@@ -36,6 +37,21 @@ class FullscreenPlayerScopeTests(unittest.TestCase):
         self.assertIn(selector, ui_view_hook)
         self.assertIn(selector, feed_player_hook)
         self.assertIn(selector, merged_player_hook)
+        self.assertIn(candidate_label, ui_view_hook)
+        self.assertIn(candidate_label, feed_player_hook)
+        self.assertIn(candidate_label, merged_player_hook)
+        self.assertRegex(
+            ui_view_hook,
+            r"isPlayerViewControllerActiveForFullscreenLayout:vc\s+candidateView:self",
+        )
+        self.assertRegex(
+            feed_player_hook,
+            r"isPlayerViewControllerActiveForFullscreenLayout:self\s+candidateView:contentView",
+        )
+        self.assertRegex(
+            merged_player_hook,
+            r"isPlayerViewControllerActiveForFullscreenLayout:self\s+candidateView:contentView",
+        )
 
     def test_active_player_context_rejects_covered_or_background_controllers(self) -> None:
         selector = "isPlayerViewControllerActiveForFullscreenLayout:"
@@ -49,6 +65,21 @@ class FullscreenPlayerScopeTests(unittest.TestCase):
             "visibleViewController",
             "selectedViewController",
             "hitTest:",
+        ):
+            self.assertIn(required_guard, implementation)
+
+    def test_active_player_context_requires_a_full_width_candidate_view(self) -> None:
+        selector = "isPlayerViewControllerActiveForFullscreenLayout:"
+        start = self.utils.find(selector)
+        self.assertNotEqual(start, -1, "active-player scope utility is missing")
+        implementation = self.utils[start : start + 6000]
+
+        for required_guard in (
+            "candidateView",
+            "candidateView.window",
+            "convertRect:candidateView.bounds",
+            "CGRectGetWidth(window.bounds)",
+            "CGRectGetWidth(visibleCandidateFrame)",
         ):
             self.assertIn(required_guard, implementation)
 
