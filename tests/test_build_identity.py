@@ -16,7 +16,7 @@ class BuildIdentityTests(unittest.TestCase):
         self.assertIsNotNone(package_version)
         self.assertIsNotNone(runtime_version)
         self.assertEqual(package_version.group(1), runtime_version.group(1))
-        self.assertIn("396diag", package_version.group(1))
+        self.assertIn("396diag2", package_version.group(1))
 
 
 if __name__ == "__main__":

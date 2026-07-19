@@ -24,3 +24,9 @@ class GrouponPlayerDiagnosticsTests(unittest.TestCase):
             self.tweak.count("DYYYCapturePartialPlayerContextIfNeeded(self, contentView)"),
             2,
         )
+
+    def test_diagnostic_never_walks_the_complete_controller_tree_on_main_thread(self) -> None:
+        self.assertNotIn("DYYYAppendControllerHierarchy", self.tweak)
+        self.assertNotIn("controllerTree:", self.tweak)
+        self.assertIn("depth < 16", self.tweak)
+        self.assertIn("dispatch_async(dispatch_get_global_queue", self.tweak)

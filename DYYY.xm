@@ -156,24 +156,6 @@ static NSString *DYYYControllerChainDescription(UIViewController *controller) {
     return [names componentsJoinedByString:@" -> "];
 }
 
-static void DYYYAppendControllerHierarchy(UIViewController *controller, NSMutableArray<NSString *> *lines, NSUInteger depth) {
-    if (!controller || depth > 10) {
-        return;
-    }
-    NSString *indent = [@"  " stringByPaddingToLength:depth * 2 withString:@"  " startingAtIndex:0];
-    CGRect frame = controller.isViewLoaded ? controller.view.frame : CGRectZero;
-    [lines addObject:[NSString stringWithFormat:@"%@%@ frame={%.1f,%.1f,%.1f,%.1f} window=%d",
-                      indent, NSStringFromClass(controller.class), frame.origin.x, frame.origin.y,
-                      frame.size.width, frame.size.height, controller.isViewLoaded && controller.view.window != nil]];
-    for (UIViewController *child in controller.childViewControllers) {
-        DYYYAppendControllerHierarchy(child, lines, depth + 1);
-    }
-    if (controller.presentedViewController) {
-        [lines addObject:[NSString stringWithFormat:@"%@presented:", indent]];
-        DYYYAppendControllerHierarchy(controller.presentedViewController, lines, depth + 1);
-    }
-}
-
 static void DYYYCapturePartialPlayerContextIfNeeded(UIViewController *playerController, UIView *contentView) {
     UIWindow *window = contentView.window;
     if (!playerController || !contentView || !window || window != [DYYYUtils getActiveWindow] ||
@@ -208,22 +190,22 @@ static void DYYYCapturePartialPlayerContextIfNeeded(UIViewController *playerCont
         activeController = activeController.presentedViewController;
     }
 
-    NSMutableArray<NSString *> *hierarchy = [NSMutableArray array];
-    DYYYAppendControllerHierarchy(window.rootViewController, hierarchy, 0);
     NSString *diagnostic = [NSString stringWithFormat:
-        @"DYYY 39.6 groupon player diagnostic\nversion=%@\nplayer=%@\nframe={%.1f,%.1f,%.1f,%.1f}\nvisible={%.1f,%.1f,%.1f,%.1f}\nplayerChain=%@\nhitView=%@\nhitChain=%@\nactiveChain=%@\ncontrollerTree:\n%@",
+        @"DYYY 39.6 groupon player diagnostic\nversion=%@\nplayer=%@\nframe={%.1f,%.1f,%.1f,%.1f}\nvisible={%.1f,%.1f,%.1f,%.1f}\nplayerChain=%@\nhitView=%@\nhitChain=%@\nactiveChain=%@",
         DYYY_VERSION, NSStringFromClass(playerController.class),
         frameInWindow.origin.x, frameInWindow.origin.y, frameInWindow.size.width, frameInWindow.size.height,
         visibleFrame.origin.x, visibleFrame.origin.y, visibleFrame.size.width, visibleFrame.size.height,
         DYYYControllerChainDescription(playerController), NSStringFromClass(hitView.class),
-        DYYYControllerChainDescription(hitController), DYYYControllerChainDescription(activeController),
-        [hierarchy componentsJoinedByString:@"\n"]];
+        DYYYControllerChainDescription(hitController), DYYYControllerChainDescription(activeController)];
 
     [UIPasteboard generalPasteboard].string = diagnostic;
-    NSString *path = [DYYYCustomAssetsDirectory() stringByAppendingPathComponent:@"groupon_player_context.txt"];
-    [diagnostic writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
-    DYYYNSLog(@"%@", diagnostic);
     [DYYYToast showSuccessToastWithMessage:@"已复制团购播放器诊断信息，请粘贴给开发者"];
+    NSString *diagnosticCopy = [diagnostic copy];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+      NSString *path = [DYYYCustomAssetsDirectory() stringByAppendingPathComponent:@"groupon_player_context.txt"];
+      [diagnosticCopy writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+      DYYYNSLog(@"%@", diagnosticCopy);
+    });
 }
 
 static NSString *DYYYCustomIconFileNameForButtonName(NSString *nameString) {
