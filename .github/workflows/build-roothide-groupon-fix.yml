@@ -1,0 +1,116 @@
+name: Verify Groupon Overlay Fix (RootHide)
+
+on:
+  push:
+    branches:
+      - codex/fix-groupon-player-overlay
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: groupon-overlay-roothide-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Test and build RootHide package
+    runs-on: macos-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Run fullscreen player scope regression tests
+        run: python3 -B -m unittest tests/test_fullscreen_player_scope.py -v
+
+      - name: Resolve toolchain revisions
+        id: toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          theos_revision=$(git ls-remote https://github.com/roothide/theos.git HEAD | awk '{print $1}')
+          sdk_revision=$(git ls-remote https://github.com/theos/sdks.git refs/heads/master | awk '{print $1}')
+          [[ -n "$theos_revision" ]] || { echo "Unable to resolve RootHide Theos revision" >&2; exit 1; }
+          [[ -n "$sdk_revision" ]] || { echo "Unable to resolve Theos SDK revision" >&2; exit 1; }
+          echo "cache_key=${theos_revision}-${sdk_revision}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore RootHide Theos cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ${{ github.workspace }}/theos
+          key: ${{ runner.os }}-roothide-theos-${{ steps.toolchain.outputs.cache_key }}
+
+      - name: Prepare RootHide Theos
+        uses: huami1314/theos-action@c5ddc7728cc1bcac2f07ab65fbc3022d25ce0c10
+        with:
+          theos-dir: ${{ github.workspace }}/theos
+          theos-src: https://github.com/roothide/theos
+          theos-sdks: https://github.com/theos/sdks
+          theos-sdks-branch: master
+
+      - name: Configure GNU Make
+        shell: bash
+        run: echo "$(brew --prefix make)/libexec/gnubin" >> "$GITHUB_PATH"
+
+      - name: Build RootHide DEB
+        shell: bash
+        run: |
+          set -euo pipefail
+          GITHUB_ACTIONS=true make clean package SCHEME=roothide FINALPACKAGE=1 -j"$(sysctl -n hw.ncpu)"
+
+      - name: Validate RootHide DEB
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          deb_files=(packages/*.deb)
+          if [[ ${#deb_files[@]} -ne 1 ]]; then
+            echo "Expected exactly one RootHide DEB, found ${#deb_files[@]}" >&2
+            printf '  %s\n' "${deb_files[@]}" >&2
+            exit 1
+          fi
+
+          deb=${deb_files[0]}
+          work_dir=$(mktemp -d)
+          trap 'rm -rf "$work_dir"' EXIT
+
+          control_archive=$(ar -t "$deb" | awk '/^control\.tar(\.|$)/ { print; exit }')
+          [[ -n "$control_archive" ]] || { echo "Missing control archive in $deb" >&2; exit 1; }
+          ar -p "$deb" "$control_archive" > "$work_dir/control.tar"
+          tar -xf "$work_dir/control.tar" -C "$work_dir"
+
+          control_file=$(find "$work_dir" -type f -name control -print -quit)
+          [[ -n "$control_file" ]] || { echo "Missing package control file" >&2; exit 1; }
+
+          package=$(awk -F': ' '$1 == "Package" { print $2; exit }' "$control_file")
+          version=$(awk -F': ' '$1 == "Version" { print $2; exit }' "$control_file")
+          architecture=$(awk -F': ' '$1 == "Architecture" { print $2; exit }' "$control_file")
+
+          [[ "$package" == "com.huami.dyyy" ]] || { echo "Unexpected package: $package" >&2; exit 1; }
+          [[ "$architecture" == "iphoneos-arm64e" ]] || { echo "Unexpected architecture: $architecture" >&2; exit 1; }
+          [[ -n "$version" ]] || { echo "Package version is empty" >&2; exit 1; }
+
+          output="packages/DYYY_${version}_iphoneos-arm64e_roothide.deb"
+          if [[ "$deb" != "$output" ]]; then
+            mv "$deb" "$output"
+          fi
+
+          echo "Validated $output ($package, $architecture)"
+          echo "deb=$output" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=DYYY-${version}-roothide" >> "$GITHUB_OUTPUT"
+
+      - name: Upload RootHide DEB
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.package.outputs.artifact_name }}
+          path: ${{ steps.package.outputs.deb }}
+          if-no-files-found: error
+          retention-days: 14
